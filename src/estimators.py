@@ -33,6 +33,6 @@ def fit_huber(X: np.ndarray, y: np.ndarray, fit_intercept: bool = False, epsilon
         Returns beta_hat (length p)
         Interpolates between OLS and LAD
     """
-    model = HuberRegressor(epsilon=epsilon, fit_intercept=fit_intercept)
+    model = HuberRegressor(epsilon=epsilon, alpha=1e-4, fit_intercept=fit_intercept, max_iter=5000, tol=1e-6 )
     model.fit(X, y)
     return model.coef_ if not fit_intercept else np.r_[model.intercept_, model.coef_]
