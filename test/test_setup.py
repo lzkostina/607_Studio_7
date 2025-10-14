@@ -5,7 +5,7 @@ import math
 from src.setup import (
     EPS,
     auto_regressive_cov, generate_data,
-    generate_errors
+    generate_errors, generate_full
 )
 
 ####################### auto_regressive_cov tests #######################
@@ -107,14 +107,24 @@ def test_generate_errors_infinite():
     assert abs(s2 - sigma2) / sigma2 < 0.15  # tolerant finite-sample check
 
 
+####################### fenerate_full tests ###########################
 
+def test_generate_data_shapes_and_reproducibility():
+    y1, X1, b1, m1 = generate_full(n=120, p=15, rho=0.4, df=3.0, snr=5.0, seed=2025)
+    y2, X2, b2, m2 = generate_full(n=120, p=15, rho=0.4, df=3.0, snr=5.0, seed=2025)
+    assert X1.shape == (120, 15) and y1.shape == (120,) and b1.shape == (15,)
+    # reproducibility with same seed
+    assert np.allclose(X1, X2) and np.allclose(y1, y2) and np.allclose(b1, b2)
 
-# # ---------- placeholder for the next step (generate_design) ----------
-#
-# @pytest.mark.xfail(reason="Implement generate_design(n, p, rho) first")
-# def test_generate_design_smoke():
-#     from src.simulate import generate_design  # will exist next step
-#     X = generate_design(n=50, p=10, rho=0.5, seed=123)
-#     assert X.shape == (50, 10)
-#     # Columns should be roughly centered for large n; with n=50 just smoke-check:
-#     assert np.isfinite(X).all()
+def test_generate_data_snr_targeting_is_reasonable():
+    # empirical SNR should be in the right ballpark
+    target = 10.0
+    y, X, b, meta = generate_full(n=600, p=40, rho=0.2, df=3.0, snr=target, seed=7)
+    emp = meta["empirical_snr"]
+    assert np.isfinite(emp)
+    assert abs(emp - target) / target < 0.35  # finite-sample tolerance
+
+def test_generate_data_sparse_beta_count():
+    k = 5
+    y, X, b, meta = generate_full(n=100, p=50, rho=0.0, df=math.inf, sigma2=1.0, beta_sparsity=k, seed=11)
+    assert (np.count_nonzero(b) == k)
