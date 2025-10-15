@@ -3,17 +3,6 @@
 ## Aspect ratio: \gamma = p/n controls the dimensionality regime \gamma s
 ## Design structure: correlation among predictors \rho s
 ## Signal-to-noise ratio: overall signal strength snrs
-##
-##    n : int
-##        Number of observations.
-##    df : float
-##        Degrees of freedom for Student-t error distribution.
-##    gamma : float
-##        Aspect ratio p/n.
-##    rho : float
-##        AR(1) correlation parameter in [0, 1). Cov(X_j, X_k) = rho**||j k||
-##    snr : float
-##        Target signal-to-noise ratio defined as (beta^T X^T X beta) / sigma^2
 #####################################################################
 
 from __future__ import annotations
@@ -33,7 +22,7 @@ from src.evaluation import mse_beta
 
 def parse_args() -> argparse.Namespace:
     p = argparse.ArgumentParser(description="Run robust regression simulation study.")
-    p.add_argument("--n", type=int, default=500, help="Base sample size (rows).")
+    p.add_argument("--n", type=int, default=200, help="Base sample size (rows).")
     p.add_argument("--dfs", type=float, nargs="+", default=[1, 2, 3, 20, math.inf],
                    help="Degrees of freedom for t errors; use 'inf' for Gaussian.")
     p.add_argument("--gammas", type=float, nargs="+", default=[0.2, 0.5, 0.8],
@@ -57,4 +46,89 @@ def parse_args() -> argparse.Namespace:
     return p.parse_args()
 
 
+def main():
+    args = parse_args()
+    args.output.parent.mkdir(parents=True, exist_ok=True)
+
+    # Build full grid of conditions
+    grid = list(product(args.dfs, args.gammas, args.rhos, args.snrs, range(args.reps)))
+    total_jobs = len(grid)
+
+    # Pre-allocate distinct, reproducible seeds per job using SeedSequence
+    ss = np.random.SeedSequence(args.master_seed)
+    children = ss.spawn(total_jobs)
+
+    rows = []
+    iterator = enumerate(grid)
+    if not args.quiet:
+        iterator = tqdm(iterator, total=total_jobs, desc="Simulating")
+
+    for i, (df, gamma, rho, snr, rep) in iterator:
+        # Compute p from gamma and n
+        p = max(1, int(round(gamma * args.n)))
+
+        # Derive a job-specific int seed from the child SeedSequence
+        child_rng = np.random.default_rng(children[i])
+        job_seed = int(child_rng.integers(0, 2**31 - 1))
+
+        # --- generate one dataset ---
+        y, X, beta, meta = generate_full(
+            n=args.n,
+            p=p,
+            rho=float(rho),
+            df=float(df),
+            snr=float(snr),            # SNR targeting (sigma2 derived inside)
+            sigma2=None,
+            beta_sparsity=args.beta_sparsity,
+            beta_scale=args.beta_scale,
+            center_X=args.center_X,
+            standardize_X=args.standardize_X,
+            seed=job_seed,
+        )
+
+        # --- fit estimators ---
+        # No intercept in DGP; keep fit_intercept=False so β̂ is comparable to true β
+        bhat_ols   = fit_ols(X, y, fit_intercept=False)
+        bhat_lad   = fit_lad(X, y, fit_intercept=False, alpha=0.0)   # pure LAD
+        bhat_huber = fit_huber(X, y, fit_intercept=False, epsilon=1.35)
+
+        # --- evaluate ---
+        mse_ols   = mse_beta(bhat_ols, beta)
+        mse_lad   = mse_beta(bhat_lad, beta)
+        mse_huber = mse_beta(bhat_huber, beta)
+
+        # --- record one row per method ---
+        base = dict(
+            n=args.n, p=p, gamma=float(gamma), df=float(df), rho=float(rho),
+            snr=float(snr), rep=int(rep),
+            center_X=bool(args.center_X), standardize_X=bool(args.standardize_X),
+            beta_sparsity=(None if args.beta_sparsity is None else int(args.beta_sparsity)),
+            beta_scale=float(args.beta_scale),
+            seed=int(job_seed),
+            sigma2=float(meta["sigma2"]),
+            empirical_snr=float(meta["empirical_snr"]),
+        )
+        rows.append({**base, "method": "OLS",   "mse": float(mse_ols)})
+        rows.append({**base, "method": "LAD",   "mse": float(mse_lad)})
+        rows.append({**base, "method": "Huber", "mse": float(mse_huber)})
+
+    # Write results
+    df_results = pd.DataFrame(rows)
+    df_results.to_csv(args.output, index=False)
+
+    # Tiny summary in stdout
+    summary = (
+        df_results
+        .groupby(["method", "df"], as_index=False)["mse"]
+        .mean()
+        .sort_values(["method", "df"])
+        .head(10)
+    )
+    print("\nWrote:", args.output)
+    print("Preview (mean MSE by method, df):")
+    print(summary.to_string(index=False))
+
+
+if __name__ == "__main__":
+    main()
 

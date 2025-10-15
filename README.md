@@ -47,7 +47,7 @@ pip install -r requirements.txt
 ### Usage
 ```bash
 python run_experiment.py \
-  --n 200 \
+  --n 500 \
   --dfs 1 2 3 20 inf \
   --gammas 0.2 0.5 0.8 \
   --rhos 0.0 0.5 \
